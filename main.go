@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -16,12 +17,12 @@ import (
 
 func debug(format string, args ...interface{}) {
 	fullFormat := fmt.Sprintf("%v\n", format)
-	fmt.Fprintf(os.Stderr, fullFormat, args...)
+	log.Printf(fullFormat, args...)
 }
 
 // Channel to communicate back on
 func tryCommand(remoteCommand string, host string, outf io.Writer) error {
-	cmd := exec.Command("ssh", host, remoteCommand)
+	cmd := exec.Command("ssh", "-o", "ConnectTimeout=2", host, remoteCommand)
 	cmd.Stdout = outf
 	cmd.Stderr = outf
 	err := cmd.Run()
@@ -40,7 +41,8 @@ func dispatch(id int, command string, hosts []string, doneChan chan bool) {
 	for _, i := range order {
 		host := hosts[i]
 		// Write out an attempt file for this command
-		attemptOutputPath := fmt.Sprintf("cmd%v_attempt%v.log", id, attempts)
+		attemptOutputPath := fmt.Sprintf("cmd_%v-attempt%v.log", id, attempts)
+		attempts++
 		outf, err := os.Create(attemptOutputPath)
 		if err != nil {
 			// Not sure how to recover from this, likely the FS is damaged or OOS.
@@ -49,9 +51,16 @@ func dispatch(id int, command string, hosts []string, doneChan chan bool) {
 		debug("EXEC command id=%v host=%v", id, host)
 		if err := tryCommand(command, host, outf); err != nil {
 			debug("ERROR id=%v status=%v", id, err)
-			debug("Retrying command on next host...")
 			continue
 		}
+		// If successful, do an atomic rename of the attempt to the final output
+		finalOutputPath := fmt.Sprintf("cmd_%v-final.log", id)
+		if os.Rename(attemptOutputPath, finalOutputPath) != nil {
+			// Issue on rename, FS errors can be hard to recover from.
+			// Instead of failing, just print an error and move on
+			debug("ERROR (id=%v): could not write output path %v, final output in %v", id, finalOutputPath, attemptOutputPath)
+		}
+		debug("SUCC id=%v output=%v", id, attemptOutputPath)
 		doneChan <- true
 		return
 	}
@@ -110,8 +119,11 @@ func main() {
 
 	// Wait for all to report in
 	numCommands := len(commands)
+	numSuccessful := 0
 	for left := 0; left < numCommands; left++ {
-		<-doneChan // Do nothing here, maybe it'd be better to have something else eg. print out the number of failed commands.
+		if <-doneChan {
+			numSuccessful++
+		}
 	}
-	debug("FINISHED %v commands", numCommands)
+	debug("FINISHED=%v FAILED=%v TOTAL=%v", numSuccessful, numCommands-numSuccessful, numCommands)
 }
