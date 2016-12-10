@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"time"
 )
 
 func debug(format string, args ...interface{}) {
@@ -83,6 +84,8 @@ func main() {
 	flag.StringVar(&hostsFilePath, "hosts", "hosts.txt", "Path to hosts file")
 	flag.Parse()
 
+	rand.Seed(time.Now().UnixNano())
+
 	if len(os.Args) > 1 && os.Args[1] == "help" {
 		flag.Usage()
 		return
@@ -107,8 +110,8 @@ func main() {
 
 	// Wait for all to report in
 	numCommands := len(commands)
-	for left := 0; left < numCommands; left += 1 {
-		<-doneChan
+	for left := 0; left < numCommands; left++ {
+		<-doneChan // Do nothing here, maybe it'd be better to have something else eg. print out the number of failed commands.
 	}
 	debug("FINISHED %v commands", numCommands)
 }
